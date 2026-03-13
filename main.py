@@ -49,17 +49,42 @@ def _start_stop_listener(stop_event: threading.Event):
             pass
 
 
+def get_email_body(message):
+    payload = message.get('payload', {})
+    
+    def extract_text(part):
+        mime_type = part.get('mimeType')
+        # Check for both plain text and HTML
+        if mime_type in ['text/plain', 'text/html']:
+            data = part.get('body', {}).get('data', '')
+            if data:
+                return base64.urlsafe_b64decode(data).decode('utf-8')
+        
+        # If it's a multipart message, dive into the parts
+        if 'parts' in part:
+            all_text = ""
+            for subpart in part['parts']:
+                all_text += extract_text(subpart)
+            return all_text
+        return ''
+    
+    extracted_text = extract_text(payload) or message.get('snippet', '')
+    return extracted_text
+
+
 def main():
     service = get_gmail_service()
     project_code = input("Enter ALMA Project Code (e.g., 2024.1.00657.S): ")
 
     # Search for messages with the specific label
     query = f"label:{project_code}"
+    print(f"Searching with query: {query}")
     results = service.users().messages().list(userId='me', q=query).execute()
     messages = results.get('messages', [])
 
     if not messages:
         print(f"No emails found with label: {project_code}")
+        print("Make sure the emails are labeled with the project code in Gmail.")
         return
 
     total = len(messages)
@@ -81,21 +106,43 @@ def main():
         current_num = i + 1
         
         # Get full message content
-        message = service.users().messages().get(userId='me', id=msg['id']).execute()
-        body = message['snippet'] # Snippet usually contains the wget command for ALMA emails
+        message = service.users().messages().get(userId='me', id=msg['id'], format='full').execute()
+        body = get_email_body(message)
         
-        # Regex to find the wget2 command
-        # This looks for the string starting with wget2 all the way to the end of the line
-        match = re.search(r'wget2\s+.*', body)
+        print(f"\n--- Processing email {current_num} ---")
+        print(f"Message ID: {msg['id']}")
+        print(f"Body length: {len(body)}")
+        print(f"Body preview: {body}...")  # First 500 chars
+        
+        # Regex to find the download URL
+        match = re.search(r'wget2\s+.*?(https://dl-naasc\.nrao\.edu/anonymous/\d+/[a-f0-9]+/?)', body, re.DOTALL)
+
+        if match:
+            # group(0) is the whole match including 'wget2' and the URL
+            # # .replace('\\', '') handles the backslash line breaks often found in these emails
+            download_url = match.group(0).replace('\\', '').strip() 
+
         
         if match:
-            wget_command = match.group(0)
+            # 1. Get the raw match
+            raw_command = match.group(0)
+            
+            # 2. CLEANING: Remove the backslash and the newline that follows it
+            # This turns the multi-line email command into a single-line terminal command
+            download_url = raw_command.replace('\\\n', ' ').replace('\n', ' ').strip()
+            
+            # 3. EXTRA SAFETY: Remove any HTML tags that might have been caught (like <pre>)
+            download_url = re.sub(r'<[^>]+>', '', download_url)
+
+            print(f"Found URL: {download_url}")
+            print(f"Constructed command: {download_url}")
+
             
             # Print the log in the format you requested
             print(f"{current_num}. Downloading...")
 
             proc = subprocess.Popen(
-                wget_command,
+                download_url,
                 shell=True,
                 cwd=drive_path,
                 stdout=subprocess.DEVNULL,
@@ -119,14 +166,16 @@ def main():
                     for completed in range(1, current_num + 1):
                         print(f"{completed}. Downloaded")
                 else:
-                    print(f"Error downloading item {current_num}")
+                    print(f"Error downloading from item {current_num}")
             except Exception as e:
                 proc.terminate()
                 print(f"Error downloading item {current_num}: {e}")
                 if stop_event.is_set():
                     break
         else:
-            print(f"Could not find wget2 command in email {current_num}")
+            print(f"Could not find download URL in email {current_num}")
+            print(f"Full body: {body}")
+            print("--- End of email body ---")
 
 if __name__ == '__main__':
     main()
