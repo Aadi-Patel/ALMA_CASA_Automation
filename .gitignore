@@ -1,0 +1,13 @@
+# Ignore the actual Conda environment folder if it's inside your project
+env/
+venv/
+.venv/
+bin/
+
+# Ignore Python cache
+__pycache__/
+*.pyc
+
+# Ignore the Google API tokens we talked about
+credentials.json
+token.json
