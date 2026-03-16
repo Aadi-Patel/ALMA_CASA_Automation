@@ -146,7 +146,7 @@ def main():
                 shell=True,
                 cwd=drive_path,
                 stdout=subprocess.DEVNULL,
-                stderr=subprocess.STDOUT,
+                stderr=subprocess.PIPE,
             )
 
             try:
@@ -166,7 +166,8 @@ def main():
                     for completed in range(1, current_num + 1):
                         print(f"{completed}. Downloaded")
                 else:
-                    print(f"Error downloading from item {current_num}")
+                    error_message = proc.stderr.read().decode('utf-8').strip() if proc.stderr else "No error message"
+                    print(f"Error downloading from item {current_num}: Return code {proc.returncode}, Message: {error_message}")
             except Exception as e:
                 proc.terminate()
                 print(f"Error downloading item {current_num}: {e}")
