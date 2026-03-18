@@ -14,6 +14,8 @@ from googleapiclient.discovery import build
 # If modifying these scopes, delete the file token.json.
 SCOPES = ['https://www.googleapis.com/auth/gmail.readonly']
 
+Drive_Location = "/Users/aadipatel/Desktop/ExtraDrive1"
+
 def get_gmail_service():
     creds = None
     if os.path.exists('token.json'):
@@ -72,6 +74,75 @@ def get_email_body(message):
     return extracted_text
 
 
+def extract_x_pair_from_tgz(filename: str):
+    """Extract pattern X###..._X###... from a tgz filename and return tuple.
+    Example: member.uid___A001_X128a_X1d6.session_1.caltables.tgz -> ('X128a', 'X1d6').
+    """
+    # Search for two X segments separated by underscore in the basename
+    match = re.search(r'(X[0-9]+[A-Za-z0-9]*)_(X[0-9]+[A-Za-z0-9]*)', filename)
+    if not match:
+        return None
+    first, second = match.group(1), match.group(2)
+    if first.startswith('X') and second.startswith('X'):
+        return first, second
+    return None
+
+
+def rename_pipeline_dirs_for_project(project_root: str):
+    """Rename pipeline#### directories under project_root to Xfirst/Xsecond based on .tgz names."""
+    import shutil
+
+    if not os.path.isdir(project_root):
+        print(f"Project root not found for renaming: {project_root}")
+        return
+
+    entries = os.listdir(project_root)
+    for entry in entries:
+        candidate_path = os.path.join(project_root, entry)
+        if not os.path.isdir(candidate_path):
+            continue
+
+        # Often pipeline folders are named pipelinexxxx. We can rename any folder by tgz metadata.
+        tgz_found = []
+        for root, _, files in os.walk(candidate_path):
+            for f in files:
+                if f.lower().endswith('.tgz'):
+                    tgz_found.append(f)
+            if tgz_found:
+                break
+
+        if not tgz_found:
+            continue
+
+        x_pair = None
+        for tgz in tgz_found:
+            x_pair = extract_x_pair_from_tgz(tgz)
+            if x_pair:
+                break
+
+        if not x_pair:
+            print(f"No X-pair found in .tgz names under {candidate_path}, skipping rename.")
+            continue
+
+        x_first, x_second = x_pair
+        new_relative = f"{x_first}_{x_second}"
+        new_path = os.path.join(project_root, new_relative)
+
+        if os.path.abspath(candidate_path) == os.path.abspath(new_path):
+            continue
+
+        # If target exists, merge contents instead of error.
+        os.makedirs(os.path.dirname(new_path), exist_ok=True)
+        if os.path.exists(new_path):
+            print(f"Target already exists; merging {candidate_path} into {new_path}")
+            for item in os.listdir(candidate_path):
+                shutil.move(os.path.join(candidate_path, item), os.path.join(new_path, item))
+            shutil.rmtree(candidate_path)
+        else:
+            shutil.move(candidate_path, new_path)
+            print(f"Renamed pipeline folder {candidate_path} -> {new_path}")
+
+
 def main():
     service = get_gmail_service()
     project_code = input("Enter ALMA Project Code (e.g., 2024.1.00657.S): ")
@@ -88,7 +159,7 @@ def main():
         return
 
     total = len(messages)
-    drive_path = "/Users/aadipatel/Desktop/ExtraDrive1" # Ensure this path is correct for Ubuntu
+    drive_path = Drive_Location
     
     print(f"\n--- Starting Download for {project_code} ---")
     print(f"Total files to process: {total}\n")
@@ -177,6 +248,11 @@ def main():
             print(f"Could not find download URL in email {current_num}")
             print(f"Full body: {body}")
             print("--- End of email body ---")
+
+    project_folder = os.path.join(drive_path, project_code)
+    print(f"\n--- Renaming pipeline folders under {project_folder} ---")
+    rename_pipeline_dirs_for_project(project_folder)
+    print("--- Rename pass completed.\n")
 
 if __name__ == '__main__':
     main()
