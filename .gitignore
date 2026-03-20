@@ -8,6 +8,9 @@ bin/
 __pycache__/
 *.pyc
 
-# Ignore the Google API tokens we talked about
+# Ignore the Google API tokens
 credentials.json
 token.json
+
+# Ignore other files
+.DS_Store
